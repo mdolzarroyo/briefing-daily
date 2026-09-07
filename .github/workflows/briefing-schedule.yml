@@ -40,4 +40,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           RECIPIENT_EMAIL: mdolzaaroyo@gmail.com
+          # Si se lanza manualmente (workflow_dispatch), ignora la
+          # comprobación de horario para poder probar a cualquier hora.
+          IGNORAR_HORARIO: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: python briefing.py
