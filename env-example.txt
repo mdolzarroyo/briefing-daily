@@ -1,0 +1,13 @@
+# Copia este archivo a ".env" y rellena tus valores reales.
+# NUNCA subas el archivo ".env" real a GitHub ni lo compartas.
+
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Gmail: usa un "App Password" (no tu contraseña normal).
+# Genera uno en: https://myaccount.google.com/apppasswords
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=tu_correo_remitente@gmail.com
+SMTP_PASSWORD=tu_app_password_de_16_caracteres
+
+RECIPIENT_EMAIL=mdolzaaroyo@gmail.com

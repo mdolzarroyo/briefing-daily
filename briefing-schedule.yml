@@ -1,0 +1,43 @@
+# Guarda este archivo en tu repo como: .github/workflows/briefing-schedule.yml
+#
+# GitHub Actions ejecuta el script automáticamente a las 8:00 y 22:00
+# hora de España (CET/CEST). Los horarios cron están en UTC, así que se
+# ajustan dos veces al año por el cambio de hora; con las dos entradas
+# de abajo cubres tanto horario de invierno como de verano.
+
+name: Briefing Macro
+
+on:
+  schedule:
+    # Se lanza 4 veces (cubriendo horario de verano e invierno de España),
+    # pero el propio script comprueba la hora local de Madrid y solo
+    # genera/envía el briefing si son ~8:00 o ~22:00. Las otras ejecuciones
+    # terminan sin hacer nada (no se gasta llamada a la API ni se envía email).
+    - cron: "0 6 * * *"   # 08:00 hora de verano (UTC+2)
+    - cron: "0 20 * * *"  # 22:00 hora de verano (UTC+2)
+    - cron: "0 7 * * *"   # 08:00 hora de invierno (UTC+1)
+    - cron: "0 21 * * *"  # 22:00 hora de invierno (UTC+1)
+  workflow_dispatch: {}  # permite lanzarlo manualmente desde GitHub también
+
+jobs:
+  enviar-briefing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Generar y enviar briefing
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SMTP_HOST: smtp.gmail.com
+          SMTP_PORT: 587
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          RECIPIENT_EMAIL: mdolzaaroyo@gmail.com
+        run: python briefing.py
