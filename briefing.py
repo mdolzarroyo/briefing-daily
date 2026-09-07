@@ -16,15 +16,29 @@ Variables de entorno requeridas (ver .env.example):
 """
 
 import os
+import re
 import smtplib
 import ssl
 import sys
 from datetime import datetime
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
 import anthropic
+from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import (
+    HRFlowable,
+    ListFlowable,
+    ListItem,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+)
 
 # ---------- Configuración ----------
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
@@ -65,6 +79,147 @@ USER_PROMPT = """Genera el briefing macro de hoy. Cubre como mínimo:
 Formato en Markdown, listo para enviar por email."""
 
 
+def markdown_inline_a_reportlab(texto: str) -> str:
+    """Convierte negrita/cursiva markdown básica a las etiquetas XML de ReportLab."""
+    texto = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", texto)
+    texto = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<i>\1</i>", texto)
+    return texto
+
+
+def construir_pdf(cuerpo_markdown: str, ruta_salida: str) -> None:
+    """Genera un PDF con formato legible a partir del briefing en Markdown."""
+    doc = SimpleDocTemplate(
+        ruta_salida,
+        pagesize=A4,
+        topMargin=2.2 * cm,
+        bottomMargin=2 * cm,
+        leftMargin=2.2 * cm,
+        rightMargin=2.2 * cm,
+        title="Briefing macro",
+    )
+
+    styles = getSampleStyleSheet()
+
+    estilo_titulo = ParagraphStyle(
+        "TituloBriefing",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=20,
+        textColor="#1a1a2e",
+        spaceAfter=4,
+    )
+    estilo_fecha = ParagraphStyle(
+        "Fecha",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=10,
+        textColor="#666666",
+        spaceAfter=16,
+    )
+    estilo_h1 = ParagraphStyle(
+        "Seccion",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        textColor="#16213e",
+        spaceBefore=18,
+        spaceAfter=8,
+    )
+    estilo_h2 = ParagraphStyle(
+        "Subseccion",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        textColor="#0f3460",
+        spaceBefore=12,
+        spaceAfter=6,
+    )
+    estilo_cuerpo = ParagraphStyle(
+        "Cuerpo",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=10.5,
+        leading=15,
+        alignment=TA_JUSTIFY,
+        spaceAfter=8,
+    )
+    estilo_lista = ParagraphStyle(
+        "Lista",
+        parent=estilo_cuerpo,
+        spaceAfter=4,
+    )
+
+    story = []
+    ahora = datetime.now(ZoneInfo("Europe/Madrid"))
+    dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    meses = [
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    ]
+    fecha_es = (
+        f"{dias[ahora.weekday()]}, {ahora.day} de {meses[ahora.month - 1]} "
+        f"de {ahora.year} — {ahora.strftime('%H:%M')} (Madrid)"
+    )
+    story.append(Paragraph("Briefing macro y geopolítico", estilo_titulo))
+    story.append(Paragraph(fecha_es, estilo_fecha))
+    story.append(HRFlowable(width="100%", thickness=1, color="#cccccc", spaceAfter=10))
+
+    lineas = cuerpo_markdown.split("\n")
+    items_lista_actual = []
+
+    def volcar_lista():
+        nonlocal items_lista_actual
+        if items_lista_actual:
+            story.append(
+                ListFlowable(
+                    [ListItem(Paragraph(it, estilo_lista)) for it in items_lista_actual],
+                    bulletType="bullet",
+                    leftIndent=14,
+                )
+            )
+            items_lista_actual = []
+
+    for linea in lineas:
+        linea = linea.rstrip()
+
+        if not linea.strip():
+            volcar_lista()
+            continue
+
+        # Encabezados markdown
+        if linea.startswith("### "):
+            volcar_lista()
+            story.append(Paragraph(markdown_inline_a_reportlab(linea[4:]), estilo_h2))
+        elif linea.startswith("## "):
+            volcar_lista()
+            story.append(Paragraph(markdown_inline_a_reportlab(linea[3:]), estilo_h2))
+        elif linea.startswith("# "):
+            volcar_lista()
+            story.append(Paragraph(markdown_inline_a_reportlab(linea[2:]), estilo_h1))
+        elif re.match(r"^\d+\.\s+\*\*", linea) or re.match(r"^\*\*\d", linea):
+            # Línea tipo "1. **Título**" -> tratar como sub-encabezado
+            volcar_lista()
+            texto = re.sub(r"^\d+\.\s+", "", linea)
+            story.append(Paragraph(markdown_inline_a_reportlab(texto), estilo_h1))
+        elif linea.startswith(("- ", "* ")):
+            items_lista_actual.append(markdown_inline_a_reportlab(linea[2:]))
+        else:
+            volcar_lista()
+            story.append(Paragraph(markdown_inline_a_reportlab(linea), estilo_cuerpo))
+
+    volcar_lista()
+    story.append(Spacer(1, 20))
+    story.append(HRFlowable(width="100%", thickness=0.5, color="#dddddd"))
+    story.append(
+        Paragraph(
+            "Generado automáticamente. No constituye asesoramiento financiero.",
+            ParagraphStyle("Pie", parent=styles["Normal"], fontSize=8, textColor="#999999", spaceBefore=6),
+        )
+    )
+
+    doc.build(story)
+
+
 def generar_briefing() -> str:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -84,22 +239,28 @@ def generar_briefing() -> str:
     return texto
 
 
-def enviar_email(cuerpo_markdown: str) -> None:
+def enviar_email(cuerpo_markdown: str, ruta_pdf: str) -> None:
     ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
     asunto = f"Briefing macro — {ahora}"
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart()
     msg["Subject"] = asunto
     msg["From"] = SMTP_USER
     msg["To"] = RECIPIENT_EMAIL
 
-    # Versión texto plano
-    msg.attach(MIMEText(cuerpo_markdown, "plain", "utf-8"))
+    cuerpo_correo = (
+        "Adjunto el briefing macro de hoy en PDF.\n\n"
+        "— Enviado automáticamente."
+    )
+    msg.attach(MIMEText(cuerpo_correo, "plain", "utf-8"))
 
-    # Versión HTML simple (convierte saltos de línea y negritas básicas)
-    html_body = cuerpo_markdown.replace("\n", "<br>")
-    html = f"<html><body style='font-family: sans-serif;'>{html_body}</body></html>"
-    msg.attach(MIMEText(html, "html", "utf-8"))
+    with open(ruta_pdf, "rb") as f:
+        adjunto = MIMEApplication(f.read(), _subtype="pdf")
+        nombre_archivo = f"briefing-{datetime.now().strftime('%Y-%m-%d_%H%M')}.pdf"
+        adjunto.add_header(
+            "Content-Disposition", "attachment", filename=nombre_archivo
+        )
+        msg.attach(adjunto)
 
     context = ssl.create_default_context()
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
@@ -132,9 +293,14 @@ def main():
         sys.exit(0)
 
     print(f"[{datetime.now()}] Generando briefing...")
-    briefing = generar_briefing()
+    briefing_md = generar_briefing()
+
+    print(f"[{datetime.now()}] Maquetando PDF...")
+    ruta_pdf = "/tmp/briefing.pdf"
+    construir_pdf(briefing_md, ruta_pdf)
+
     print(f"[{datetime.now()}] Enviando email a {RECIPIENT_EMAIL}...")
-    enviar_email(briefing)
+    enviar_email(briefing_md, ruta_pdf)
     print(f"[{datetime.now()}] Listo.")
 
 
